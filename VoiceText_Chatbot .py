@@ -1,55 +1,97 @@
-import streamlit as st
+import speech_recognition as sr
 import requests
+import pyttsx3
 
-# 🧐 System prompt for vehicle-related responses only
-system_prompt = (
-    "You are an expert on vehicles (cars, bikes, trucks, EVs, engines, etc.). "
-    "Only answer questions related to vehicles. "
-    "If someone asks something unrelated to vehicles, respond with: "
-    "'I'm only able to answer questions about vehicles.'"
-)
+r = sr.Recognizer()
+r.energy_threshold = 300
+r.dynamic_energy_threshold = True
+engine = pyttsx3.init()
+engine.setProperty("rate", 175)
 
-# 🔌 Function to call Ollama's local API
-def chat_with_ollama(prompt):
+spoken_text = []
+chat_history = []
+
+def speak(text):
+    engine.say(text)
+    engine.runAndWait()
+
+# Function to communicate with Ollama
+def ask_ollama(prompt, history):
+    full_prompt = ""
+    for q, a in history:
+        full_prompt += f"User: {q}\nAssistant: {a}\n"
+    full_prompt += f"User: {prompt}\nAssistant:"
+
     try:
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "llama3.2:1b",
-                "prompt": f"{system_prompt}\n\nUser: {prompt}\nAssistant:",
+                "model": "llama3.2:1b",  # or any model you've pulled
+                "prompt": full_prompt,
                 "stream": False
             }
         )
-        result = response.json()
-        return result.get("response") or result.get("error", "No response found.")
+        if response.status_code == 200:
+            return response.json()["response"].strip()
+        else:
+            return " Ollama API error"
     except Exception as e:
-        return f"[Error] {e}"
+        return f" Error: {str(e)}"
 
-# 🧠 Initialize session state variables
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+# Choose mode
+mode = input("Press 'v' for voice input or 't' for text input: ").strip().lower()
 
-# 🚀 Page config
-st.set_page_config(page_title="Vehicle Chatbot", page_icon="🚗")
-st.title("🚗 Vehicle Expert Chatbot")
-st.write("Ask me anything about cars, bikes, EVs, engines, and more!")
+# Voice Mode
+if mode == "v":
+    print("\n Voice mode started. Say something... (say 'stop' to exit)\n")
 
-# 💬 Show chat history
-for role, message in st.session_state.chat_history:
-    if role == "You":
-        st.markdown(f"**🧑 You:** {message}")
-    else:
-        st.markdown(f"**🤖 Bot:** {message}")
+    try:
+        while True:
+            with sr.Microphone() as source:
+                r.adjust_for_ambient_noise(source, duration=1)
+                audio = r.listen(source, phrase_time_limit=5)
+                try:
+                    text = r.recognize_google(audio)
+                    print("You said:", text)
 
-# 📥 Input field (temporary key for safe clearing)
-user_input = st.text_input("You:", key="temp_input").strip()
+                    if "stop" in text.lower():
+                        print(" Exiting voice mode.\n")
+                        break
 
-# ✉️ Handle input
-if user_input:
-    st.session_state.chat_history.append(("You", user_input))
-    bot_reply = chat_with_ollama(user_input)
-    st.session_state.chat_history.append(("Bot", bot_reply))
+                    spoken_text.append(text)
+                    response = ask_ollama(text, chat_history)
+                    chat_history.append((text, response))
+                    print(" LLaMA:", response, "\n")
+                    speak(response)
 
-    # Clear input field by deleting key
-    del st.session_state["temp_input"]
-    st.experimental_rerun()
+
+
+                except Exception as e:
+                    print("Error:", e)
+
+    except KeyboardInterrupt:
+        print("\n Stopped manually.")
+
+#  Text Mode
+elif mode == "t":
+    print("\n Text mode started. Type your messages (type 'stop' to exit):\n")
+    while True:
+        text = input("You: ").strip()
+        if text.lower() == "stop":
+            print("sa Text mode stopped.\n")
+            break
+        spoken_text.append(text)
+        response = ask_ollama(text, chat_history)
+        chat_history.append((text, response))
+        print(" Bot:", response, "\n")
+        speak(response)
+
+else:
+    print(" Invalid input. Please restart and press 'v' or 't'.")
+
+# Chat Summary
+if chat_history:
+    print("\nConversation Summary:")
+    for i, (q, a) in enumerate(chat_history, 1):
+        print(f"{i}. You: {q}")
+        print(f"   Bot: {a}")
